@@ -42,7 +42,7 @@ export default function ActiveCall({ roomName, username, onLeave }: ActiveCallPr
       data-lk-theme="default"
       connect={true}
       onDisconnected={onLeave}
-      className="h-screen w-screen"
+      className="h-dvh w-screen overflow-hidden"
     >
       <VideoConference />
       <RoomAudioRenderer />
