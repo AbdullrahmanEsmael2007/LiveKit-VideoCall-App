@@ -1,4 +1,4 @@
-import { AccessToken } from 'livekit-server-sdk';
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(req: NextRequest) {
@@ -19,7 +19,25 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const at = new AccessToken(apiKey, apiSecret, { identity: username });
+  // Check if room exists and has participants to determine if this user should be admin
+  let isAdmin = false;
+  try {
+    const roomService = new RoomServiceClient(wsUrl, apiKey, apiSecret);
+    const participants = await roomService.listParticipants(room);
+    
+    // If no participants, this is the creator/first user
+    if (participants.length === 0) {
+      isAdmin = true;
+    }
+  } catch (error) {
+    // If room doesn't exist yet (error), this user is creating it
+    isAdmin = true;
+  }
+
+  const at = new AccessToken(apiKey, apiSecret, { 
+    identity: username,
+    metadata: JSON.stringify({ roles: isAdmin ? ['admin'] : [] })
+  });
   at.addGrant({ roomJoin: true, room: room });
 
   return NextResponse.json({ token: await at.toJwt() });
