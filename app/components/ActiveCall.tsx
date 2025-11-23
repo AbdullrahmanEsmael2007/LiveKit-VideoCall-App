@@ -4,6 +4,7 @@ import {
   LiveKitRoom,
   RoomAudioRenderer,
 } from "@livekit/components-react";
+import "@livekit/components-styles";
 import { useEffect, useState } from "react";
 import VideoLayout from "./VideoLayout";
 

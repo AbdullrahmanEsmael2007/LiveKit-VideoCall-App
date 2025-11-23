@@ -1,6 +1,6 @@
 "use client";
 
-import { useParticipants, useTracks, VideoTrack, useRoomContext } from "@livekit/components-react";
+import { useParticipants, VideoTrack } from "@livekit/components-react";
 import { Track } from "livekit-client";
 import { useState } from "react";
 import { ControlBar } from "@livekit/components-react";
@@ -44,8 +44,8 @@ export default function VideoLayout() {
   return (
     <div className="relative h-screen w-screen bg-gray-900 flex flex-col">
       {/* Video Grid */}
-      <div className="flex-1 p-4 overflow-hidden">
-        <div className={`grid ${getLayoutClass()} gap-4 h-full w-full`}>
+      <div className="flex-1 p-4 overflow-hidden flex items-center justify-center">
+        <div className={`grid ${getLayoutClass()} gap-4 w-full h-full`}>
           {visibleParticipants.map((participant, index) => {
             // For 3 participants, make first one span 2 columns
             const isFirstOfThree = visibleParticipants.length === 3 && index === 0;
@@ -56,31 +56,36 @@ export default function VideoLayout() {
             return (
               <div
                 key={participant.identity}
-                className={`relative bg-gray-800 rounded-lg overflow-hidden flex items-center justify-center ${
+                className={`relative flex items-center justify-center ${
                   isFirstOfThree ? "col-span-2" : ""
                 }`}
               >
-                {videoPublication?.track ? (
-                  <VideoTrack
-                    trackRef={{
-                      participant: participant,
-                      source: Track.Source.Camera,
-                      publication: videoPublication,
-                    }}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full">
-                    <div className="w-24 h-24 bg-blue-500 rounded-full flex items-center justify-center text-4xl font-bold mb-4">
-                      {participant.identity.charAt(0).toUpperCase()}
+                {/* 16:9 Aspect Ratio Container */}
+                <div className="relative w-full" style={{ paddingBottom: '56.25%' }}>
+                  <div className="absolute inset-0 bg-gray-800 rounded-lg overflow-hidden flex items-center justify-center">
+                    {videoPublication?.track ? (
+                      <VideoTrack
+                        trackRef={{
+                          participant: participant,
+                          source: Track.Source.Camera,
+                          publication: videoPublication,
+                        }}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full">
+                        <div className="w-24 h-24 bg-blue-500 rounded-full flex items-center justify-center text-4xl font-bold mb-4">
+                          {participant.identity.charAt(0).toUpperCase()}
+                        </div>
+                        <p className="text-white text-lg">Camera Off</p>
+                      </div>
+                    )}
+                    
+                    {/* Participant Name Overlay */}
+                    <div className="absolute bottom-2 left-2 bg-black/60 text-white px-3 py-1 rounded-full text-sm">
+                      {participant.identity}
                     </div>
-                    <p className="text-white text-lg">Camera Off</p>
                   </div>
-                )}
-                
-                {/* Participant Name Overlay */}
-                <div className="absolute bottom-2 left-2 bg-black/60 text-white px-3 py-1 rounded-full text-sm">
-                  {participant.identity}
                 </div>
               </div>
             );
@@ -143,8 +148,8 @@ export default function VideoLayout() {
         </div>
       )}
 
-      {/* Control Bar - Always visible */}
-      <div className="bg-gray-900 border-t border-gray-800">
+      {/* Control Bar - Always visible with minimal height */}
+      <div className="bg-gray-900">
         <ControlBar variation="minimal" />
       </div>
     </div>
