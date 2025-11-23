@@ -2,11 +2,10 @@
 
 import {
   LiveKitRoom,
-  VideoConference,
   RoomAudioRenderer,
 } from "@livekit/components-react";
-import "@livekit/components-styles";
 import { useEffect, useState } from "react";
+import VideoLayout from "./VideoLayout";
 
 interface ActiveCallProps {
   roomName: string;
@@ -42,9 +41,8 @@ export default function ActiveCall({ roomName, username, onLeave }: ActiveCallPr
       data-lk-theme="default"
       connect={true}
       onDisconnected={onLeave}
-      className="h-dvh w-screen overflow-hidden"
     >
-      <VideoConference />
+      <VideoLayout />
       <RoomAudioRenderer />
     </LiveKitRoom>
   );

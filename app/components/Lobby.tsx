@@ -49,10 +49,14 @@ export default function Lobby({ username, onCallAccepted }: LobbyProps) {
   );
 }
 
+const MIN_ROOM_LENGTH = 3;
+const MAX_ROOM_LENGTH = 24;
+
 function LobbyInner({ username, onCallAccepted }: LobbyProps) {
   const participants = useParticipants();
   const room = useRoomContext();
   const [incomingCall, setIncomingCall] = useState<{ from: string; room: string } | null>(null);
+  const [roomError, setRoomError] = useState("");
 
   useEffect(() => {
     if (!room) return;
@@ -131,11 +135,40 @@ function LobbyInner({ username, onCallAccepted }: LobbyProps) {
 
   const [customRoom, setCustomRoom] = useState("");
 
+  const validateRoomName = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed.length < MIN_ROOM_LENGTH) {
+      setRoomError(`Room name must be at least ${MIN_ROOM_LENGTH} characters`);
+      return false;
+    }
+    if (trimmed.length > MAX_ROOM_LENGTH) {
+      setRoomError(`Room name must be at most ${MAX_ROOM_LENGTH} characters`);
+      return false;
+    }
+    setRoomError("");
+    return true;
+  };
+
+  const handleRoomNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    // Prevent input beyond max length
+    if (value.length <= MAX_ROOM_LENGTH) {
+      setCustomRoom(value);
+      if (value.trim()) {
+        validateRoomName(value);
+      } else {
+        setRoomError("");
+      }
+    }
+  };
+
   const joinCustomRoom = () => {
-    if (customRoom.trim()) {
+    if (validateRoomName(customRoom)) {
       onCallAccepted(customRoom.trim());
     }
   };
+
+  const isRoomValid = customRoom.trim().length >= MIN_ROOM_LENGTH && customRoom.trim().length <= MAX_ROOM_LENGTH;
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -144,17 +177,26 @@ function LobbyInner({ username, onCallAccepted }: LobbyProps) {
       <div className="mb-8 p-6 bg-gray-800 rounded-xl border border-gray-700 shadow-lg">
         <h2 className="text-xl font-bold mb-4 text-white">Create or Join a Room</h2>
         <div className="flex gap-4">
-          <input
-            type="text"
-            value={customRoom}
-            onChange={(e) => setCustomRoom(e.target.value)}
-            placeholder="Enter room name (e.g. DailyStandup)"
-            className="flex-1 bg-gray-700 border border-gray-600 text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-          />
+          <div className="flex-1">
+            <input
+              type="text"
+              value={customRoom}
+              onChange={handleRoomNameChange}
+              placeholder="Enter room name (e.g. DailyStandup)"
+              className={`w-full bg-gray-700 border text-white rounded-lg px-4 py-2 focus:outline-none focus:ring-2 transition-all ${
+                roomError ? "border-red-500 focus:ring-red-500" : "border-gray-600 focus:ring-blue-500"
+              }`}
+              maxLength={MAX_ROOM_LENGTH}
+            />
+            {roomError && <p className="text-red-400 text-sm mt-1">{roomError}</p>}
+            <p className="text-gray-400 text-xs mt-1">
+              {customRoom.length}/{MAX_ROOM_LENGTH} characters (minimum {MIN_ROOM_LENGTH})
+            </p>
+          </div>
           <button
             onClick={joinCustomRoom}
-            disabled={!customRoom.trim()}
-            className="bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-6 py-2 rounded-lg transition-colors"
+            disabled={!isRoomValid}
+            className="bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold px-6 py-2 rounded-lg transition-colors self-start"
           >
             Join
           </button>
