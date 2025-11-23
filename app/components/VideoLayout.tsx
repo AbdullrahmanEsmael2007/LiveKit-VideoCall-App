@@ -33,7 +33,19 @@ export default function VideoLayout() {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const videoElementsRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   
+  // Ref to track current layout state for the recording loop
+  const layoutRef = useRef({
+    videoTracks: [] as any[],
+    spotlightTrack: null as any,
+    visibleTracks: [] as any[]
+  });
+
   // Get all tracks for recording (including audio)
   const allTracks = useTracks([
     Track.Source.Camera,
@@ -49,6 +61,32 @@ export default function VideoLayout() {
   const startIndex = currentPage * tracksPerPage;
   const endIndex = startIndex + tracksPerPage;
   const visibleTracks = videoTracks.slice(startIndex, endIndex);
+
+  // Update layout ref whenever state changes
+  useEffect(() => {
+    layoutRef.current = {
+      videoTracks,
+      spotlightTrack,
+      visibleTracks
+    };
+  }, [videoTracks, spotlightTrack, visibleTracks]);
+
+  // Fix: Auto-switch to previous page if current page becomes empty
+  useEffect(() => {
+    if (currentPage > 0 && currentPage >= totalPages) {
+      setCurrentPage(Math.max(0, totalPages - 1));
+    }
+  }, [totalTracks, totalPages, currentPage]);
+
+  // Fix: Auto-exit spotlight if track is removed (e.g. screen share stops)
+  useEffect(() => {
+    if (spotlightTrack) {
+      const trackStillExists = videoTracks.some(t => t.publication.trackSid === spotlightTrack.publication.trackSid);
+      if (!trackStillExists) {
+        setSpotlightTrack(null);
+      }
+    }
+  }, [videoTracks, spotlightTrack]);
 
   // Check for admin role
   useEffect(() => {
@@ -135,40 +173,156 @@ export default function VideoLayout() {
     setCurrentPage((prev) => Math.min(totalPages - 1, prev + 1));
   };
 
-  // Recording functions
+  // Canvas Recording Implementation
   const startRecording = async () => {
     try {
-      // Use screen capture to record what the user actually sees
-      // Removed displaySurface constraint to allow user to select any tab/window
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true, 
-        audio: false, // We'll add audio separately
-      });
+      // 1. Setup Canvas (720p for performance)
+      const canvas = document.createElement('canvas');
+      canvas.width = 1280;
+      canvas.height = 720;
+      canvasRef.current = canvas;
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) throw new Error("Could not get canvas context");
 
-      // Get all audio tracks from the call
-      const audioTracks: MediaStreamTrack[] = [];
-      allTracks.forEach((trackRef) => {
-        if (trackRef.publication && trackRef.publication.track) {
-          const track = trackRef.publication.track.mediaStreamTrack;
-          if (track && track.kind === "audio") {
-            audioTracks.push(track);
-          }
+      // 2. Setup Audio Mixing
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const audioContext = new AudioContextClass();
+      const audioDestination = audioContext.createMediaStreamDestination();
+      audioContextRef.current = audioContext;
+      audioDestinationRef.current = audioDestination;
+
+      // Connect all existing audio tracks
+      allTracks.forEach(trackRef => {
+        if (trackRef.publication?.track?.mediaStreamTrack.kind === 'audio') {
+          const stream = new MediaStream([trackRef.publication.track.mediaStreamTrack]);
+          const source = audioContext.createMediaStreamSource(stream);
+          source.connect(audioDestination);
         }
       });
 
-      // Combine display video with call audio
+      // 3. Start Drawing Loop (setInterval for background reliability)
+      const drawFrame = () => {
+        if (!canvasRef.current || !ctx) return;
+
+        // Get latest state from ref
+        const { videoTracks: currentVideoTracks, spotlightTrack: currentSpotlightTrack, visibleTracks: currentVisibleTracks } = layoutRef.current;
+
+        // Clear canvas
+        ctx.fillStyle = '#111827'; // gray-900 background
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Determine layout to draw
+        if (currentSpotlightTrack) {
+          // --- SPOTLIGHT LAYOUT (720p) ---
+          // Main video (large)
+          const mainVideoEl = videoElementsRef.current.get(currentSpotlightTrack.publication.trackSid);
+          if (mainVideoEl && mainVideoEl.readyState >= 2) {
+            const { width, height } = calculateAspectRatioFit(
+              mainVideoEl.videoWidth, 
+              mainVideoEl.videoHeight, 
+              canvas.width, 
+              canvas.height - 140 // Leave space for thumbnails
+            );
+            const x = (canvas.width - width) / 2;
+            const y = 10; // Top padding
+            ctx.drawImage(mainVideoEl, x, y, width, height);
+            drawLabel(ctx, currentSpotlightTrack.participant.identity, x + 10, y + height - 30);
+          }
+
+          // Thumbnails (bottom strip)
+          const thumbnails = currentVideoTracks.filter(t => t.publication.trackSid !== currentSpotlightTrack.publication.trackSid);
+          const thumbWidth = 213; // Scaled down for 720p
+          const thumbHeight = 120;
+          const gap = 10;
+          const totalWidth = thumbnails.length * (thumbWidth + gap) - gap;
+          let startX = (canvas.width - totalWidth) / 2;
+          const startY = canvas.height - thumbHeight - 10;
+
+          thumbnails.forEach((track) => {
+            const vidEl = videoElementsRef.current.get(track.publication.trackSid);
+            if (vidEl && vidEl.readyState >= 2) {
+               ctx.drawImage(vidEl, startX, startY, thumbWidth, thumbHeight);
+               drawLabel(ctx, track.participant.identity, startX + 5, startY + thumbHeight - 20, 14);
+               startX += thumbWidth + gap;
+            }
+          });
+
+        } else {
+          // --- GRID LAYOUT (720p) ---
+          const count = currentVisibleTracks.length;
+          
+          currentVisibleTracks.forEach((track, index) => {
+            const vidEl = videoElementsRef.current.get(track.publication.trackSid);
+            if (vidEl && vidEl.readyState >= 2) {
+              let x, y, w, h;
+
+              // Grid Logic for 1280x720
+              if (count === 1) {
+                w = 1280; h = 720; x = 0; y = 0;
+              } else if (count === 2) {
+                w = 640; h = 720; x = index * 640; y = 0;
+              } else {
+                // 3 or 4 items: 2x2 grid
+                w = 640; h = 360;
+                x = (index % 2) * 640;
+                y = Math.floor(index / 2) * 360;
+                
+                if (count === 3) {
+                  if (index === 0) {
+                    w = 1280; h = 360; x = 0; y = 0;
+                  } else {
+                    w = 640; h = 360; 
+                    x = (index - 1) * 640; 
+                    y = 360;
+                  }
+                }
+              }
+
+              const { width: drawW, height: drawH } = calculateAspectRatioFit(
+                vidEl.videoWidth, vidEl.videoHeight, w, h
+              );
+              const drawX = x + (w - drawW) / 2;
+              const drawY = y + (h - drawH) / 2;
+
+              ctx.drawImage(vidEl, drawX, drawY, drawW, drawH);
+              drawLabel(ctx, track.participant.identity, drawX + 10, drawY + drawH - 30);
+            }
+          });
+        }
+      };
+
+      // Helper to fit video in box
+      const calculateAspectRatioFit = (srcWidth: number, srcHeight: number, maxWidth: number, maxHeight: number) => {
+        const ratio = Math.min(maxWidth / srcWidth, maxHeight / srcHeight);
+        return { width: srcWidth * ratio, height: srcHeight * ratio };
+      };
+
+      // Helper to draw text label
+      const drawLabel = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, fontSize = 20) => {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        const padding = 6;
+        ctx.font = `${fontSize}px sans-serif`;
+        const textWidth = ctx.measureText(text).width;
+        ctx.fillRect(x, y - fontSize, textWidth + padding * 2, fontSize + padding);
+        ctx.fillStyle = 'white';
+        ctx.fillText(text, x + padding, y + padding / 2);
+      };
+
+      // Start loop (30 FPS)
+      intervalRef.current = setInterval(drawFrame, 33);
+
+      // 4. Capture Stream & Mix Audio
+      const canvasStream = canvas.captureStream(30);
       const combinedStream = new MediaStream([
-        ...displayStream.getVideoTracks(),
-        ...audioTracks,
+        ...canvasStream.getVideoTracks(),
+        ...audioDestination.stream.getAudioTracks(),
       ]);
 
+      // 5. Start Recorder
       let options: MediaRecorderOptions = { mimeType: "video/webm;codecs=vp9" };
-      
       if (!MediaRecorder.isTypeSupported(options.mimeType || "")) {
         options = { mimeType: "video/webm" };
-        if (!MediaRecorder.isTypeSupported(options.mimeType || "")) {
-          options = { mimeType: "" };
-        }
       }
 
       const mediaRecorder = new MediaRecorder(combinedStream, options);
@@ -180,10 +334,7 @@ export default function VideoLayout() {
       };
 
       mediaRecorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, {
-          type: "video/webm",
-        });
-
+        const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -191,29 +342,26 @@ export default function VideoLayout() {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-
         URL.revokeObjectURL(url);
         recordedChunksRef.current = [];
         
-        displayStream.getTracks().forEach(track => track.stop());
-      };
-
-      displayStream.getVideoTracks()[0].addEventListener('ended', () => {
-        if (mediaRecorder.state !== 'inactive') {
-          stopRecording();
+        // Cleanup
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        canvasStream.getTracks().forEach(track => track.stop());
+        
+        if (audioContextRef.current) {
+          audioContextRef.current.close();
+          audioContextRef.current = null;
         }
-      });
+      };
 
       mediaRecorder.start(1000);
       mediaRecorderRef.current = mediaRecorder;
       setIsRecording(true);
+
     } catch (error) {
       console.error("Error starting recording:", error);
-      if (error instanceof Error && error.name === "NotAllowedError") {
-        alert("Screen recording permission denied. Please allow screen sharing to record the call.");
-      } else {
-        alert("Failed to start recording. Please try again.");
-      }
+      alert("Failed to start recording. Please try again.");
     }
   };
 
@@ -230,6 +378,12 @@ export default function VideoLayout() {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+      }
     };
   }, []);
 
@@ -240,9 +394,6 @@ export default function VideoLayout() {
     } else if (count === 2) {
       return "grid-cols-2 grid-rows-1";
     } else if (count === 3) {
-      // 3 items: 2 on top, 1 on bottom centered (handled by col-span logic)
-      // OR 2x2 grid where last one spans. 
-      // Let's stick to 2x2 but ensure height is handled.
       return "grid-cols-2 grid-rows-2"; 
     } else {
       return "grid-cols-2 grid-rows-2";
@@ -279,6 +430,20 @@ export default function VideoLayout() {
           <VideoTrack
             trackRef={trackRef}
             className="w-full h-full object-contain bg-black"
+            // Attach ref to the underlying video element
+            ref={(el: HTMLElement | null) => {
+              if (el) {
+                // The VideoTrack component might wrap the video, but usually it passes ref to video
+                // If it's a wrapper, we might need to find the video tag inside
+                // Let's assume for now it returns the video element or we can find it
+                const videoEl = el instanceof HTMLVideoElement ? el : el.querySelector('video');
+                if (videoEl) {
+                   videoElementsRef.current.set(trackRef.publication.trackSid, videoEl);
+                }
+              } else {
+                videoElementsRef.current.delete(trackRef.publication.trackSid);
+              }
+            }}
           />
           
           {/* Overlay Info - Always visible with better contrast */}
