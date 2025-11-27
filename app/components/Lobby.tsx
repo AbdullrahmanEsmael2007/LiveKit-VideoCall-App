@@ -17,6 +17,7 @@ interface LobbyProps {
 
 export default function Lobby({ username, onCallAccepted }: LobbyProps) {
   const [token, setToken] = useState("");
+  const [tokenError, setTokenError] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -24,14 +25,17 @@ export default function Lobby({ username, onCallAccepted }: LobbyProps) {
         const resp = await fetch(
           `/api/token?room=lobby&username=${encodeURIComponent(username)}`
         );
+        if (!resp.ok) throw new Error("Failed to fetch token");
         const data = await resp.json();
         setToken(data.token);
       } catch (e) {
         console.error(e);
+        setTokenError("Failed to connect to lobby. Please refresh.");
       }
     })();
   }, [username]);
 
+  if (tokenError) return <div className="flex items-center justify-center h-screen text-red-500">{tokenError}</div>;
   if (!token) return <div className="flex items-center justify-center h-screen">Loading Lobby...</div>;
 
   return (
@@ -56,19 +60,35 @@ function LobbyInner({ username, onCallAccepted }: LobbyProps) {
   const participants = useParticipants();
   const room = useRoomContext();
   const [incomingCall, setIncomingCall] = useState<{ from: string; room: string } | null>(null);
+  const [outgoingCall, setOutgoingCall] = useState<string | null>(null);
   const [roomError, setRoomError] = useState("");
+
+  // Timeout for outgoing calls
+  useEffect(() => {
+    if (!outgoingCall) return;
+    const timer = setTimeout(() => {
+      setOutgoingCall(null);
+      alert("Call timed out. The user might be away.");
+    }, 30000); // 30 seconds timeout
+    return () => clearTimeout(timer);
+  }, [outgoingCall]);
 
   useEffect(() => {
     if (!room) return;
 
     const handleData = (payload: Uint8Array, participant?: RemoteParticipant) => {
       const str = new TextDecoder().decode(payload);
-      const data = JSON.parse(str);
+      try {
+        const data = JSON.parse(str);
 
-      if (data.type === "CALL_REQUEST" && participant) {
-        setIncomingCall({ from: participant.identity, room: data.room });
-      } else if (data.type === "CALL_ACCEPT") {
-        onCallAccepted(data.room);
+        if (data.type === "CALL_REQUEST" && participant) {
+          setIncomingCall({ from: participant.identity, room: data.room });
+        } else if (data.type === "CALL_ACCEPT") {
+          setOutgoingCall(null); // Clear outgoing call state
+          onCallAccepted(data.room);
+        }
+      } catch (e) {
+        console.error("Failed to parse data message:", e);
       }
     };
 
@@ -89,14 +109,13 @@ function LobbyInner({ username, onCallAccepted }: LobbyProps) {
             destinationIdentities: [targetIdentity],
             reliable: true,
         });
-        // Optimistically join? Or wait for accept? Let's wait for accept or just join.
-        // For simplicity, let's just wait for accept, but we need UI to show "Calling..."
-        // For this simple mock, let's just jump to the room and wait for them.
-        // Actually, better flow: Send request, wait for accept.
-        // But to keep it simple as requested: "if he approves we connect"
-        // So we wait for CALL_ACCEPT.
+        setOutgoingCall(targetIdentity);
         console.log(`Calling ${targetIdentity}...`);
     }
+  };
+
+  const cancelCall = () => {
+    setOutgoingCall(null);
   };
 
   const acceptCall = () => {
@@ -219,6 +238,22 @@ function LobbyInner({ username, onCallAccepted }: LobbyProps) {
                 className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-full"
               >
                 Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {outgoingCall && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl text-black">
+            <h2 className="text-xl font-bold mb-4">Calling {outgoingCall}...</h2>
+            <div className="flex gap-4 justify-center">
+              <button 
+                onClick={cancelCall}
+                className="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-full"
+              >
+                Cancel
               </button>
             </div>
           </div>
