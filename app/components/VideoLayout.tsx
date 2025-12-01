@@ -1,6 +1,6 @@
 "use client";
 
-import { VideoTrack, useTracks, useLocalParticipant, useRoomContext, TrackReferenceOrPlaceholder } from "@livekit/components-react";
+import { VideoTrack, useTracks, useLocalParticipant, useRoomContext, TrackReferenceOrPlaceholder, TrackReference } from "@livekit/components-react";
 import { Track, RoomEvent, RemoteParticipant, Participant, ConnectionQuality, ParticipantEvent } from "livekit-client";
 import { useState, useRef, useEffect } from "react";
 import { ControlBar } from "@livekit/components-react";
@@ -79,23 +79,27 @@ function TrackTile({ trackRef, isSpotlight, onClick, onContextMenu, onVideoEleme
           h-full
         `}
       >
-        <VideoTrack
-          trackRef={trackRef as TrackReferenceOrPlaceholder}
-          className="w-full h-full object-contain bg-black"
-          // Attach ref to the underlying video element
-          ref={(el: HTMLElement | null) => {
-            if (trackRef.publication) {
+        {trackRef.publication ? (
+          <VideoTrack
+            trackRef={trackRef as TrackReference}
+            className="w-full h-full object-contain bg-black"
+            // Attach ref to the underlying video element
+            ref={(el: HTMLElement | null) => {
               if (el) {
                 const videoEl = el instanceof HTMLVideoElement ? el : el.querySelector('video');
                 if (videoEl) {
-                   onVideoElement(trackRef.publication.trackSid, videoEl);
+                   onVideoElement(trackRef.publication!.trackSid, videoEl);
                 }
               } else {
-                onVideoElement(trackRef.publication.trackSid, null);
+                onVideoElement(trackRef.publication!.trackSid, null);
               }
-            }
-          }}
-        />
+            }}
+          />
+        ) : (
+          <div className="w-full h-full bg-gray-900 flex items-center justify-center">
+            <span className="text-gray-500 text-sm">Camera Off</span>
+          </div>
+        )}
         
         {/* Overlay Info - Always visible with better contrast */}
         <div className="absolute bottom-2 left-2 bg-black/70 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2 z-10 pointer-events-none">
