@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface UsernameFormProps {
   onSubmit: (username: string) => void;
@@ -40,9 +40,22 @@ export default function UsernameForm({ onSubmit }: UsernameFormProps) {
     }
   };
 
+  useEffect(() => {
+    const saved = localStorage.getItem("livekit_username");
+    if (saved) {
+      // eslint-disable-next-line
+      setUsername(saved);
+      // Validate immediately to enable the button if valid
+      if (saved.trim().length >= MIN_LENGTH && saved.trim().length <= MAX_LENGTH) {
+        // No error needed if valid
+      }
+    }
+  }, []);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (validateUsername(username)) {
+      localStorage.setItem("livekit_username", username.trim());
       onSubmit(username.trim());
     }
   };

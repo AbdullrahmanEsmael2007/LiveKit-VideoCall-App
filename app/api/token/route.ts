@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     if (participants.length === 0) {
       isAdmin = true;
     }
-  } catch (error) {
+  } catch {
     // If room doesn't exist yet (error), this user is creating it
     isAdmin = true;
   }

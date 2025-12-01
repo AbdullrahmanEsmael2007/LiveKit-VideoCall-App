@@ -1,9 +1,135 @@
 "use client";
 
-import { useParticipants, VideoTrack, useTracks, useLocalParticipant, useRoomContext } from "@livekit/components-react";
-import { Track, RoomEvent, RemoteParticipant } from "livekit-client";
+import { VideoTrack, useTracks, useLocalParticipant, useRoomContext, TrackReferenceOrPlaceholder } from "@livekit/components-react";
+import { Track, RoomEvent, RemoteParticipant, Participant, ConnectionQuality, ParticipantEvent } from "livekit-client";
 import { useState, useRef, useEffect } from "react";
 import { ControlBar } from "@livekit/components-react";
+
+// Helper component for individual tiles to handle reactive state (speaking, connection)
+interface TrackTileProps {
+  trackRef: TrackReferenceOrPlaceholder;
+  isSpotlight: boolean;
+  onClick?: () => void;
+  onContextMenu: (e: React.MouseEvent, participant: Participant) => void;
+  onVideoElement: (sid: string, el: HTMLVideoElement | null) => void;
+}
+
+function TrackTile({ trackRef, isSpotlight, onClick, onContextMenu, onVideoElement }: TrackTileProps) {
+  const participant = trackRef.participant;
+  const [isSpeaking, setIsSpeaking] = useState(participant.isSpeaking);
+  const [connectionQuality, setConnectionQuality] = useState(participant.connectionQuality);
+  
+  useEffect(() => {
+    const onSpeakingChanged = (speaking: boolean) => {
+      setIsSpeaking(speaking);
+    };
+    const onConnectionQualityChanged = (quality: ConnectionQuality) => {
+      setConnectionQuality(quality);
+    };
+
+    participant.on(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
+    participant.on(ParticipantEvent.ConnectionQualityChanged, onConnectionQualityChanged);
+
+    return () => {
+      participant.off(ParticipantEvent.IsSpeakingChanged, onSpeakingChanged);
+      participant.off(ParticipantEvent.ConnectionQualityChanged, onConnectionQualityChanged);
+    };
+  }, [participant]);
+
+  const isScreenShare = trackRef.source === Track.Source.ScreenShare;
+
+  // Connection Quality Icon
+  const getSignalIcon = (quality: ConnectionQuality) => {
+    switch (quality) {
+      case ConnectionQuality.Excellent:
+      case ConnectionQuality.Good:
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-500" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zm6-4a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zm6-3a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+          </svg>
+        );
+      case ConnectionQuality.Poor:
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zm6-4a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7z" />
+          </svg>
+        );
+      default: // Lost or Unknown
+        return (
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clipRule="evenodd" />
+            <path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z" />
+          </svg>
+        );
+    }
+  };
+
+  return (
+    <div
+      className={`relative flex items-center justify-center cursor-pointer group w-full h-full p-1`}
+      onClick={onClick}
+      onContextMenu={(e) => onContextMenu(e, trackRef.participant)}
+    >
+      {/* Container - Enforce Aspect Ratio in Grid, Full in Spotlight */}
+      <div 
+        className={`relative w-full bg-gray-800 rounded-lg overflow-hidden border-2 transition-colors flex items-center justify-center
+          ${isScreenShare ? "border-blue-500" : ""} 
+          ${isSpeaking && !isScreenShare ? "border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" : "border-transparent"}
+          ${!isSpotlight && !isSpeaking ? "group-hover:border-white" : ""}
+          h-full
+        `}
+      >
+        <VideoTrack
+          trackRef={trackRef as TrackReferenceOrPlaceholder}
+          className="w-full h-full object-contain bg-black"
+          // Attach ref to the underlying video element
+          ref={(el: HTMLElement | null) => {
+            if (trackRef.publication) {
+              if (el) {
+                const videoEl = el instanceof HTMLVideoElement ? el : el.querySelector('video');
+                if (videoEl) {
+                   onVideoElement(trackRef.publication.trackSid, videoEl);
+                }
+              } else {
+                onVideoElement(trackRef.publication.trackSid, null);
+              }
+            }
+          }}
+        />
+        
+        {/* Overlay Info - Always visible with better contrast */}
+        <div className="absolute bottom-2 left-2 bg-black/70 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2 z-10 pointer-events-none">
+          {/* Connection Quality */}
+          {getSignalIcon(connectionQuality)}
+
+          {isScreenShare && (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          )}
+          <span className="truncate max-w-[150px]">{trackRef.participant.identity} {isScreenShare ? "(Screen)" : ""}</span>
+          {/* Admin Badge */}
+          {JSON.parse(trackRef.participant.metadata || '{}').roles?.includes('admin') && (
+            <span className="bg-red-600 text-white text-xs px-1 rounded ml-1 font-bold">ADMIN</span>
+          )}
+        </div>
+
+        {/* Maximize/Minimize Icon */}
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 p-1 rounded-full text-white z-10">
+          {isSpotlight ? (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+            </svg>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function VideoLayout() {
   const room = useRoomContext();
@@ -14,7 +140,7 @@ export default function VideoLayout() {
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
-    participant: any;
+    participant: Participant;
   } | null>(null);
 
   // Get all video tracks (camera and screen share)
@@ -24,7 +150,7 @@ export default function VideoLayout() {
   ]);
 
   // Spotlight state
-  const [spotlightTrack, setSpotlightTrack] = useState<any>(null);
+  const [spotlightTrack, setSpotlightTrack] = useState<TrackReferenceOrPlaceholder | null>(null);
 
   const [currentPage, setCurrentPage] = useState(0);
   const tracksPerPage = 4;
@@ -41,9 +167,9 @@ export default function VideoLayout() {
   
   // Ref to track current layout state for the recording loop
   const layoutRef = useRef({
-    videoTracks: [] as any[],
-    spotlightTrack: null as any,
-    visibleTracks: [] as any[]
+    videoTracks: [] as TrackReferenceOrPlaceholder[],
+    spotlightTrack: null as TrackReferenceOrPlaceholder | null,
+    visibleTracks: [] as TrackReferenceOrPlaceholder[]
   });
 
   // Get all tracks for recording (including audio)
@@ -81,7 +207,7 @@ export default function VideoLayout() {
   // Fix: Auto-exit spotlight if track is removed (e.g. screen share stops)
   useEffect(() => {
     if (spotlightTrack) {
-      const trackStillExists = videoTracks.some(t => t.publication.trackSid === spotlightTrack.publication.trackSid);
+      const trackStillExists = videoTracks.some(t => t.publication?.trackSid === spotlightTrack.publication?.trackSid);
       if (!trackStillExists) {
         setSpotlightTrack(null);
       }
@@ -186,7 +312,7 @@ export default function VideoLayout() {
       if (!ctx) throw new Error("Could not get canvas context");
 
       // 2. Setup Audio Mixing
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const audioContext = new AudioContextClass();
       const audioDestination = audioContext.createMediaStreamDestination();
       audioContextRef.current = audioContext;
@@ -213,7 +339,7 @@ export default function VideoLayout() {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         // Determine layout to draw
-        if (currentSpotlightTrack) {
+        if (currentSpotlightTrack && currentSpotlightTrack.publication) {
           // --- SPOTLIGHT LAYOUT (720p) ---
           // Main video (large)
           const mainVideoEl = videoElementsRef.current.get(currentSpotlightTrack.publication.trackSid);
@@ -231,7 +357,7 @@ export default function VideoLayout() {
           }
 
           // Thumbnails (bottom strip)
-          const thumbnails = currentVideoTracks.filter(t => t.publication.trackSid !== currentSpotlightTrack.publication.trackSid);
+          const thumbnails = currentVideoTracks.filter(t => t.publication?.trackSid !== currentSpotlightTrack.publication?.trackSid);
           const thumbWidth = 213; // Scaled down for 720p
           const thumbHeight = 120;
           const gap = 10;
@@ -240,11 +366,13 @@ export default function VideoLayout() {
           const startY = canvas.height - thumbHeight - 10;
 
           thumbnails.forEach((track) => {
-            const vidEl = videoElementsRef.current.get(track.publication.trackSid);
-            if (vidEl && vidEl.readyState >= 2) {
-               ctx.drawImage(vidEl, startX, startY, thumbWidth, thumbHeight);
-               drawLabel(ctx, track.participant.identity, startX + 5, startY + thumbHeight - 20, 14);
-               startX += thumbWidth + gap;
+            if (track.publication) {
+              const vidEl = videoElementsRef.current.get(track.publication.trackSid);
+              if (vidEl && vidEl.readyState >= 2) {
+                 ctx.drawImage(vidEl, startX, startY, thumbWidth, thumbHeight);
+                 drawLabel(ctx, track.participant.identity, startX + 5, startY + thumbHeight - 20, 14);
+                 startX += thumbWidth + gap;
+              }
             }
           });
 
@@ -253,40 +381,42 @@ export default function VideoLayout() {
           const count = currentVisibleTracks.length;
           
           currentVisibleTracks.forEach((track, index) => {
-            const vidEl = videoElementsRef.current.get(track.publication.trackSid);
-            if (vidEl && vidEl.readyState >= 2) {
-              let x, y, w, h;
+            if (track.publication) {
+              const vidEl = videoElementsRef.current.get(track.publication.trackSid);
+              if (vidEl && vidEl.readyState >= 2) {
+                let x, y, w, h;
 
-              // Grid Logic for 1280x720
-              if (count === 1) {
-                w = 1280; h = 720; x = 0; y = 0;
-              } else if (count === 2) {
-                w = 640; h = 720; x = index * 640; y = 0;
-              } else {
-                // 3 or 4 items: 2x2 grid
-                w = 640; h = 360;
-                x = (index % 2) * 640;
-                y = Math.floor(index / 2) * 360;
-                
-                if (count === 3) {
-                  if (index === 0) {
-                    w = 1280; h = 360; x = 0; y = 0;
-                  } else {
-                    w = 640; h = 360; 
-                    x = (index - 1) * 640; 
-                    y = 360;
+                // Grid Logic for 1280x720
+                if (count === 1) {
+                  w = 1280; h = 720; x = 0; y = 0;
+                } else if (count === 2) {
+                  w = 640; h = 720; x = index * 640; y = 0;
+                } else {
+                  // 3 or 4 items: 2x2 grid
+                  w = 640; h = 360;
+                  x = (index % 2) * 640;
+                  y = Math.floor(index / 2) * 360;
+                  
+                  if (count === 3) {
+                    if (index === 0) {
+                      w = 1280; h = 360; x = 0; y = 0;
+                    } else {
+                      w = 640; h = 360; 
+                      x = (index - 1) * 640; 
+                      y = 360;
+                    }
                   }
                 }
+
+                const { width: drawW, height: drawH } = calculateAspectRatioFit(
+                  vidEl.videoWidth, vidEl.videoHeight, w, h
+                );
+                const drawX = x + (w - drawW) / 2;
+                const drawY = y + (h - drawH) / 2;
+
+                ctx.drawImage(vidEl, drawX, drawY, drawW, drawH);
+                drawLabel(ctx, track.participant.identity, drawX + 10, drawY + drawH - 30);
               }
-
-              const { width: drawW, height: drawH } = calculateAspectRatioFit(
-                vidEl.videoWidth, vidEl.videoHeight, w, h
-              );
-              const drawX = x + (w - drawW) / 2;
-              const drawY = y + (h - drawH) / 2;
-
-              ctx.drawImage(vidEl, drawX, drawY, drawW, drawH);
-              drawLabel(ctx, track.participant.identity, drawX + 10, drawY + drawH - 30);
             }
           });
         }
@@ -400,81 +530,12 @@ export default function VideoLayout() {
     }
   };
 
-  // Render a single track tile
-  const renderTrackTile = (trackRef: any, isSpotlight: boolean = false, onClick?: () => void) => {
-    const isScreenShare = trackRef.source === Track.Source.ScreenShare;
-    
-    return (
-      <div
-        key={trackRef.publication.trackSid}
-        className={`relative flex items-center justify-center cursor-pointer group w-full h-full p-1`}
-        onClick={onClick}
-        onContextMenu={(e) => {
-          if (!isAdmin || trackRef.participant.identity === localParticipant.identity) return;
-          e.preventDefault();
-          setContextMenu({
-            x: e.clientX,
-            y: e.clientY,
-            participant: trackRef.participant
-          });
-        }}
-      >
-        {/* Container - Enforce Aspect Ratio in Grid, Full in Spotlight */}
-        <div 
-          className={`relative w-full bg-gray-800 rounded-lg overflow-hidden border-2 transition-colors flex items-center justify-center
-            ${isScreenShare ? "border-blue-500" : "border-transparent"} 
-            ${!isSpotlight ? "group-hover:border-white" : ""}
-            h-full
-          `}
-        >
-          <VideoTrack
-            trackRef={trackRef}
-            className="w-full h-full object-contain bg-black"
-            // Attach ref to the underlying video element
-            ref={(el: HTMLElement | null) => {
-              if (el) {
-                // The VideoTrack component might wrap the video, but usually it passes ref to video
-                // If it's a wrapper, we might need to find the video tag inside
-                // Let's assume for now it returns the video element or we can find it
-                const videoEl = el instanceof HTMLVideoElement ? el : el.querySelector('video');
-                if (videoEl) {
-                   videoElementsRef.current.set(trackRef.publication.trackSid, videoEl);
-                }
-              } else {
-                videoElementsRef.current.delete(trackRef.publication.trackSid);
-              }
-            }}
-          />
-          
-          {/* Overlay Info - Always visible with better contrast */}
-          <div className="absolute bottom-2 left-2 bg-black/70 text-white px-3 py-1 rounded-full text-sm flex items-center gap-2 z-10 pointer-events-none">
-            {isScreenShare && (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-              </svg>
-            )}
-            <span className="truncate max-w-[150px]">{trackRef.participant.identity} {isScreenShare ? "(Screen)" : ""}</span>
-            {/* Admin Badge */}
-            {JSON.parse(trackRef.participant.metadata || '{}').roles?.includes('admin') && (
-              <span className="bg-red-600 text-white text-xs px-1 rounded ml-1 font-bold">ADMIN</span>
-            )}
-          </div>
-
-          {/* Maximize/Minimize Icon */}
-          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 p-1 rounded-full text-white z-10">
-            {isSpotlight ? (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
-              </svg>
-            )}
-          </div>
-        </div>
-      </div>
-    );
+  const handleVideoElement = (sid: string, el: HTMLVideoElement | null) => {
+    if (el) {
+      videoElementsRef.current.set(sid, el);
+    } else {
+      videoElementsRef.current.delete(sid);
+    }
   };
 
   return (
@@ -487,16 +548,36 @@ export default function VideoLayout() {
           <div className="flex-1 flex flex-col gap-4 h-full min-h-0">
             {/* Spotlighted Track (Large) */}
             <div className="flex-1 relative min-h-0 w-full flex items-center justify-center">
-              {renderTrackTile(spotlightTrack, true, () => setSpotlightTrack(null))}
+              <TrackTile
+                trackRef={spotlightTrack}
+                isSpotlight={true}
+                onClick={() => setSpotlightTrack(null)}
+                onContextMenu={(e, p) => {
+                  if (!isAdmin || p.identity === localParticipant.identity) return;
+                  e.preventDefault();
+                  setContextMenu({ x: e.clientX, y: e.clientY, participant: p });
+                }}
+                onVideoElement={handleVideoElement}
+              />
             </div>
 
             {/* Thumbnail Strip */}
             <div className="h-32 flex gap-4 overflow-x-auto pb-2 px-2 snap-x flex-shrink-0">
               {videoTracks
-                .filter(t => t.publication.trackSid !== spotlightTrack.publication.trackSid)
+                .filter(t => t.publication?.trackSid !== spotlightTrack.publication?.trackSid)
                 .map(track => (
-                  <div key={track.publication.trackSid} className="w-48 flex-shrink-0 snap-start">
-                    {renderTrackTile(track, false, () => setSpotlightTrack(track))}
+                  <div key={track.publication?.trackSid || track.participant.identity} className="w-48 flex-shrink-0 snap-start">
+                    <TrackTile
+                      trackRef={track}
+                      isSpotlight={false}
+                      onClick={() => setSpotlightTrack(track)}
+                      onContextMenu={(e, p) => {
+                        if (!isAdmin || p.identity === localParticipant.identity) return;
+                        e.preventDefault();
+                        setContextMenu({ x: e.clientX, y: e.clientY, participant: p });
+                      }}
+                      onVideoElement={handleVideoElement}
+                    />
                   </div>
                 ))
               }
@@ -512,10 +593,20 @@ export default function VideoLayout() {
                 
                 return (
                   <div 
-                    key={track.publication.trackSid} 
+                    key={track.publication?.trackSid || track.participant.identity} 
                     className={`min-h-0 min-w-0 ${isFirstOfThree ? "col-span-2 row-span-1" : "col-span-1 row-span-1"}`}
                   >
-                     {renderTrackTile(track, false, () => setSpotlightTrack(track))}
+                     <TrackTile
+                      trackRef={track}
+                      isSpotlight={false}
+                      onClick={() => setSpotlightTrack(track)}
+                      onContextMenu={(e, p) => {
+                        if (!isAdmin || p.identity === localParticipant.identity) return;
+                        e.preventDefault();
+                        setContextMenu({ x: e.clientX, y: e.clientY, participant: p });
+                      }}
+                      onVideoElement={handleVideoElement}
+                    />
                   </div>
                 );
               })}
@@ -620,4 +711,3 @@ export default function VideoLayout() {
     </div>
   );
 }
-

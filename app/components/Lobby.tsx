@@ -6,9 +6,8 @@ import {
   useParticipants,
   useRoomContext,
 } from "@livekit/components-react";
-import { RemoteParticipant, RoomEvent, DataPacket_Kind } from "livekit-client";
+import { RemoteParticipant, RoomEvent } from "livekit-client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
 interface LobbyProps {
   username: string;
@@ -132,7 +131,13 @@ function LobbyInner({ username, onCallAccepted }: LobbyProps) {
     onCallAccepted(incomingCall.room);
   };
 
-  const [activeRooms, setActiveRooms] = useState<any[]>([]);
+  interface RoomInfo {
+    sid: string;
+    name: string;
+    numParticipants: number;
+  }
+
+  const [activeRooms, setActiveRooms] = useState<RoomInfo[]>([]);
 
   useEffect(() => {
     const fetchRooms = async () => {

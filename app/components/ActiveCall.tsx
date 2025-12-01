@@ -14,6 +14,31 @@ interface ActiveCallProps {
   onLeave: () => void;
 }
 
+import { Toaster, toast } from "react-hot-toast";
+import { useRoomContext } from "@livekit/components-react";
+import { RoomEvent, RemoteParticipant } from "livekit-client";
+
+function RoomEvents() {
+  const room = useRoomContext();
+  useEffect(() => {
+    if (!room) return;
+    const onConnected = (p: RemoteParticipant) => {
+      toast.success(`${p.identity} joined the room`);
+    };
+    const onDisconnected = (p: RemoteParticipant) => {
+      toast(`${p.identity} left the room`, { icon: '👋' });
+    };
+    
+    room.on(RoomEvent.ParticipantConnected, onConnected);
+    room.on(RoomEvent.ParticipantDisconnected, onDisconnected);
+    return () => {
+      room.off(RoomEvent.ParticipantConnected, onConnected);
+      room.off(RoomEvent.ParticipantDisconnected, onDisconnected);
+    };
+  }, [room]);
+  return null;
+}
+
 export default function ActiveCall({ roomName, username, onLeave }: ActiveCallProps) {
   const [token, setToken] = useState("");
   const [tokenError, setTokenError] = useState("");
@@ -49,6 +74,8 @@ export default function ActiveCall({ roomName, username, onLeave }: ActiveCallPr
     >
       <VideoLayout />
       <RoomAudioRenderer />
+      <RoomEvents />
+      <Toaster position="top-right" />
     </LiveKitRoom>
   );
 }
